@@ -10,7 +10,7 @@ kernel_array_beam_slave_sincos(int N, float r1, float r2, float r3, float *x, fl
   //extern __shared__ float tmpsum[]; /* assumed to be size 2*Nx1 */
 
   #if use_cub == 0
-  __shared__ float tmpsum[2*block_size_x]; /* assumed to be size 2*Nx1 */
+  __shared__ float tmpsum[1000]; /* assumed to be size 2*Nx1 */
   tmpsum[2*n]=0.0f;
   tmpsum[2*n+1]=0.0f;
   #else
@@ -26,7 +26,7 @@ kernel_array_beam_slave_sincos(int N, float r1, float r2, float r3, float *x, fl
 
   #endif
 
-  for (int i=n; i<N; i+=block_size_x) {
+  for (int i=n; i<N; i+=N) {
     float ss,cc;
     sincosf((r1*__ldg(&x[i])+r2*__ldg(&y[i])+r3*__ldg(&z[i])),&ss,&cc);
     #if use_cub == 0
@@ -78,8 +78,8 @@ kernel_array_beam_slave_sincos(int N, float r1, float r2, float r3, float *x, fl
 extern "C"
 __global__ void 
 kernel_array_beam_slave_sincos_original(int N, float r1, float r2, float r3, float *x, float *y, float *z, float *sum, int blockDim_2) {
-  unsigned int n=threadIdx.x+blockDim.x*blockIdx.x;
-  __shared__ float tmpsum[2*block_size_x]; /* assumed to be size 2*Nx1 */
+  unsigned int n=threadIdx.x; //+blockDim.x*blockIdx.x;
+  __shared__ float tmpsum[1000]; /* assumed to be size 2*Nx1 */
   if (n<N) {
     float ss,cc;
     sincosf((r1*__ldg(&x[n])+r2*__ldg(&y[n])+r3*__ldg(&z[n])),&ss,&cc);

@@ -37,7 +37,7 @@ def tune():
     args = [np.int32(Nelem), r1, r2, r3, x, y, z, tar, np.int32(blockDim_2)]
 
     tune_params = OrderedDict()
-    tune_params["block_size_x"] = [2**i for i in range (5,11)]
+    tune_params["block_size_x"] = [2**i for i in range (7,11)]
     tune_params["use_cub"] = [0, 1]
     # tune_params["use_cub"] = [1, 0]
 
