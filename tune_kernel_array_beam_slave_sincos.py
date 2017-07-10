@@ -19,16 +19,18 @@ def tune():
     T     =   1
     F     =   1
 
-    problem_size = 100000
+    problem_size = 1
 
-    ThreadsPerBlock = 8
+    #  ThreadsPerBlock = 8
 
-    grid_size = int(2 * (problem_size + ThreadsPerBlock - 1)/ThreadsPerBlock)
+    # grid_size = int(2 * (problem_size + ThreadsPerBlock - 1)/ThreadsPerBlock)
 
     # size = numpy.prod(problem_size)
 
-    r1, r2, r3 = np.random.rand(3).astype(np.float32)
-    x, y, z    = np.random.rand(3, Nelem).astype(np.float32)
+    # r1, r2, r3 = np.random.rand(3).astype(np.float32)
+    r1, r2, r3 = np.linspace(0.1,1,3, endpoint=False).astype(np.float32)
+    # x, y, z    = np.random.rand(3, Nelem).astype(np.float32)
+    x, y, z = np.linspace(0.1,1,3*Nelem, endpoint=False).astype(np.float32).reshape(3, Nelem)
     tar        = np.empty(2).astype(np.float32)
     blockDim_2 = power_bit_length(Nelem)
 
@@ -37,12 +39,20 @@ def tune():
     tune_params = OrderedDict()
     tune_params["block_size_x"] = [2**i for i in range (5,11)]
     tune_params["use_cub"] = [0, 1]
+    # tune_params["use_cub"] = [1, 0]
 
     grid_div_x = []
 
+    # Verify results using the old kernel.
+    params = { "block_size_x": 128}
+    results = kernel_tuner.run_kernel("kernel_array_beam_slave_sincos_original", kernel_string, problem_size,
+        args, params, grid_div_x=grid_div_x)
+
+    answer = [None, None, None, None, None, None, None, results[7], None]
+
     return kernel_tuner.tune_kernel("kernel_array_beam_slave_sincos", kernel_string, problem_size,
         args, tune_params, grid_div_x=grid_div_x,
-        verbose = True)
+        verbose = True, answer = answer)
 
 
 if __name__ == "__main__":
