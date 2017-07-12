@@ -71,7 +71,7 @@ def tune_kernels():
     F     =   1
 
     # Tell the Kernel Tuner how the grid dimensions are to be computed
-    problem_size = 1
+    problem_size = 100000
     grid_div_x = []
 
     # Compute reference answer using the original kernel
@@ -84,7 +84,7 @@ def tune_kernels():
     # And it will only give the correct answer for a block size equal to Nelem, 
     # so there is nothing to be tuned.
     tune_params["block_size_x"] = [int(Nelem)]
-    kernel_tuner.tune_kernel("kernel_array_beam_slave_sincos_original", kernel_string, 1,
+    kernel_tuner.tune_kernel("kernel_array_beam_slave_sincos_original", kernel_string, problem_size,
         args, tune_params, grid_div_x=[], verbose=True, answer=answer)
     
     # Tune the kernel with the manual reduction loop
