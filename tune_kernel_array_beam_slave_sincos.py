@@ -78,8 +78,16 @@ def tune_kernels():
     reference = call_reference_kernel(*args)
     answer = [None, None, None, None, None, None, None, reference]
 
-    # Tune the kernel with the manual reduction loop
     tune_params = OrderedDict()
+    # Tune the original kernel. Actually, run it once, to compare the run times 
+    # with the other kernels.
+    # And it will only give the correct answer for a block size equal to Nelem, 
+    # so there is nothing to be tuned.
+    tune_params["block_size_x"] = [int(Nelem)]
+    kernel_tuner.tune_kernel("kernel_array_beam_slave_sincos_original", kernel_string, 1,
+        args, tune_params, grid_div_x=[], verbose=True, answer=answer)
+    
+    # Tune the kernel with the manual reduction loop
     tune_params["block_size_x"] = [2**i for i in range (5,11)]
     manual_kernel, _ = kernel_tuner.tune_kernel("sincos_manual", kernel_string, problem_size,
         args, tune_params, grid_div_x=grid_div_x, verbose=True, answer=answer)
