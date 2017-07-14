@@ -36,7 +36,7 @@
 /* enable this for checking for kernel failure */
 //#define CUDA_DBG
 
-__device__ void
+__device__ __forceinline__ void
 radec2azel_gmst__(float ra, float dec, float longitude, float latitude, float thetaGMST, float *az, float *el) {
   float thetaLST=thetaGMST+longitude*180.0f/M_PI;
 
@@ -124,7 +124,7 @@ kernel_array_beam_slave_cos(int N, float r1, float r2, float r3, float *x, float
 
 /* sum: 2x1 array */
 __global__ void 
-kernel_array_beam_slave_sincos(int N, float r1, float r2, float r3, float *x, float *y, float *z, float *sum, int blockDim_2) {
+kernel_array_beam_slave_sincos(int N, float r1, float r2, float r3, const float *x, const float *y, const float *z, float *sum, int blockDim_2) {
   unsigned int n=threadIdx.x+blockDim.x*blockIdx.x;
   extern __shared__ float tmpsum[]; /* assumed to be size 2*Nx1 */
   if (n<N) {
@@ -173,8 +173,11 @@ NearestPowerOf2 (int n){
 /* master kernel to calculate beam */
 /* tarr: size NTKFx2 buffer to store sin() cos() sums */
 __global__ void 
-kernel_array_beam(int N, int T, int K, int F, float *freqs, float *longitude, float *latitude,
- double *time_utc, int *Nelem, float **xx, float **yy, float **zz, float *ra, float *dec, float ph_ra0, float ph_dec0, float ph_freq0, float *beam, float *tarr) {
+kernel_array_beam(int N, int T, int K, int F,
+    const float *__restrict__ freqs, const float *__restrict__ longitude, const float *__restrict__ latitude,
+    const double *time_utc, const int *__restrict__ Nelem,
+    const float * const *__restrict__ xx, const float * const *__restrict__ yy, const float * const *__restrict__ zz,
+    const float *__restrict__ ra, const float *__restrict__ dec, float ph_ra0, float ph_dec0, float ph_freq0, float *beam, float *tarr) {
 
   /* global thread index */
   unsigned int n=threadIdx.x+blockDim.x*blockIdx.x;
@@ -192,7 +195,8 @@ kernel_array_beam(int N, int T, int K, int F, float *freqs, float *longitude, fl
 
 /*********************************************************************/
    /* time is already converted to thetaGMST */
-   float thetaGMST=(float)__ldg(&time_utc[itm]);
+    //TODO: time_utc is stored as double, but is used as float, this is wasting bandwidth
+   float thetaGMST=(float) time_utc[itm]; //Ben removed __ldg, because of lack of data reuse
    /* find az,el */
    float az,el,az0,el0,theta,phi,theta0,phi0;
    radec2azel_gmst__(__ldg(&ra[isrc]),__ldg(&dec[isrc]), __ldg(&longitude[istat]), __ldg(&latitude[istat]), thetaGMST, &az, &el);
@@ -205,7 +209,7 @@ kernel_array_beam(int N, int T, int K, int F, float *freqs, float *longitude, fl
 /*********************************************************************/
 
    /* 2*PI/C */
-   const float tpc=2.0f*M_PI/CONST_C;
+   const float tpc=2.0f * M_PI/CONST_C;
    float sint,cost,sinph,cosph,sint0,cost0,sinph0,cosph0;
    sincosf(theta,&sint,&cost);
    sincosf(phi,&sinph,&cosph);
@@ -938,8 +942,6 @@ kernel_tuner_host_array_beam(int N, int T, int K, int F, float *freqs, float *lo
     cudaMemcpy(d_beam, beam, N*T*K*F*sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_time_utc, time_utc, T*sizeof(double), cudaMemcpyHostToDevice);
     cudaMemcpy(d_Nelem, Nelem, N*sizeof(int), cudaMemcpyHostToDevice);
-
-
 
 
     // create events for measuring time
