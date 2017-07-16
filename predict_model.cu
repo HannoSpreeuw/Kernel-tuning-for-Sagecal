@@ -257,7 +257,7 @@ kernel_array_beam(int N, int T, int K, int F,
     float csum = 0.0f;
     for (int i=0; i<Nelems; i++) {
         float ss,cc;
-        sincosf((r1*__ldg(&xx[istat][n])+r2*__ldg(&yy[istat][n])+r3*__ldg(&zz[istat][n])),&ss,&cc);
+        sincosf((r1*__ldg(&xx[istat][i])+r2*__ldg(&yy[istat][i])+r3*__ldg(&zz[istat][i])),&ss,&cc);
         ssum += ss;
         csum += cc;
     }
@@ -988,6 +988,8 @@ kernel_tuner_host_array_beam(int N, int T, int K, int F, float *freqs, float *lo
     cudaDeviceSynchronize();
     float time = 0.0f;
     cudaEventElapsedTime(&time, start, stop);
+
+    cudaMemcpy(beam, d_beam, N*T*K*F*sizeof(float), cudaMemcpyDeviceToHost);
 
     cudaFree(d_x);
     cudaFree(d_y);
