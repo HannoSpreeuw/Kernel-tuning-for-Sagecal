@@ -18,10 +18,16 @@
 */
 
 #ifndef block_size_x
-  #define block_size_x DEFAULT_TH_PER_BK
+  //#define block_size_x DEFAULT_TH_PER_BK
+  #define block_size_x 128
 #endif
+
 #ifndef use_kernel
-  #define use_kernel 1
+  #define use_kernel 0
+#endif
+
+#ifndef use_shared_mem
+  #define use_shared_mem 1
 #endif
 
 #include <cuComplex.h>
@@ -177,14 +183,17 @@ kernel_array_beam(int N, int T, int K, int F,
     const float *__restrict__ freqs, const float *__restrict__ longitude, const float *__restrict__ latitude,
     const double *time_utc, const int *__restrict__ Nelem,
     const float * const *__restrict__ xx, const float * const *__restrict__ yy, const float * const *__restrict__ zz,
-    const float *__restrict__ ra, const float *__restrict__ dec, float ph_ra0, float ph_dec0, float ph_freq0, float *beam, float *tarr) {
+    const float *__restrict__ ra, const float *__restrict__ dec, float ph_ra0, float ph_dec0, float ph_freq0, float *beam, float *tarr,
+    int Ntotal) {
 
   /* global thread index */
   unsigned int n=threadIdx.x+blockDim.x*blockIdx.x;
+
   /* allowed max threads */
-  int Ntotal=N*T*K*F;
+  //int Ntotal=N*T*K*F; //Ben, no need to compute this 18 million times
   if (n<Ntotal) {
    /* find respective station,source,freq,time for this thread */
+
    int istat=n/(K*T*F);
    int n1=n-istat*(K*T*F);
    int isrc=n1/(T*F);
@@ -253,11 +262,28 @@ kernel_array_beam(int N, int T, int K, int F,
    float csum=__ldg(&tarr[2*n+1]);
  
 #else  // instead just use a for-loop
+    #if use_shared_mem == 1
+    #define MAX_ELEM 512
+    __shared__ float sh_x[MAX_ELEM];
+    __shared__ float sh_y[MAX_ELEM];
+    __shared__ float sh_z[MAX_ELEM];
+    for (int i=threadIdx.x; i<Nelems; i+=block_size_x) {
+        sh_x[i] = __ldg(&xx[istat][i]);
+        sh_y[i] = __ldg(&yy[istat][i]);
+        sh_z[i] = __ldg(&zz[istat][i]);
+    }
+    __syncthreads();
+    #endif
+
     float ssum = 0.0f;
     float csum = 0.0f;
     for (int i=0; i<Nelems; i++) {
         float ss,cc;
-        sincosf((r1*__ldg(&xx[istat][i])+r2*__ldg(&yy[istat][i])+r3*__ldg(&zz[istat][i])),&ss,&cc);
+        #if use_shared_mem == 0
+         sincosf((r1*__ldg(&xx[istat][i])+r2*__ldg(&yy[istat][i])+r3*__ldg(&zz[istat][i])),&ss,&cc);
+        #else
+         sincosf(r1*sh_x[i]+r2*sh_y[i]+r3*sh_z[i],&ss,&cc);
+        #endif
         ssum += ss;
         csum += cc;
     }
@@ -759,7 +785,7 @@ cudakernel_array_beam(int N, int T, int K, int F, float *freqs, float *longitude
   int ThreadsPerBlock=DEFAULT_TH_PER_BK;
   /* note: make sure we do not exceed max no of blocks available, otherwise (too many sources, loop over source id) */
   int BlocksPerGrid= 2*(Ntotal+ThreadsPerBlock-1)/ThreadsPerBlock;
-  kernel_array_beam<<<BlocksPerGrid,ThreadsPerBlock>>>(N,T,K,F,freqs,longitude,latitude,time_utc,Nelem,xx,yy,zz,ra,dec,ph_ra0,ph_dec0,ph_freq0,beam,buffer);
+  kernel_array_beam<<<BlocksPerGrid,ThreadsPerBlock>>>(N,T,K,F,freqs,longitude,latitude,time_utc,Nelem,xx,yy,zz,ra,dec,ph_ra0,ph_dec0,ph_freq0,beam,buffer, N*T*K*F);
   cudaDeviceSynchronize();
 
   cudaFree(buffer);
@@ -976,9 +1002,9 @@ kernel_tuner_host_array_beam(int N, int T, int K, int F, float *freqs, float *lo
     cudaEventRecord(start, 0);
 
     #if use_kernel == 1
-    kernel_array_beam<<<BlocksPerGrid,ThreadsPerBlock>>>(N,T,K,F,d_freqs,d_longitude,d_latitude,d_time_utc,d_Nelem,d_xx,d_yy,d_zz,d_ra,d_dec,ph_ra0,ph_dec0,ph_freq0,d_beam,buffer);
+    kernel_array_beam<<<BlocksPerGrid,ThreadsPerBlock>>>(N,T,K,F,d_freqs,d_longitude,d_latitude,d_time_utc,d_Nelem,d_xx,d_yy,d_zz,d_ra,d_dec,ph_ra0,ph_dec0,ph_freq0,d_beam,buffer, N*K*T*F);
     #else
-    kernel_array_beam<<<BlocksPerGrid,ThreadsPerBlock>>>(N,T,K,F,d_freqs,d_longitude,d_latitude,d_time_utc,d_Nelem,d_xx,d_yy,d_zz,d_ra,d_dec,ph_ra0,ph_dec0,ph_freq0,d_beam, (float *)0);
+    kernel_array_beam<<<BlocksPerGrid,ThreadsPerBlock>>>(N,T,K,F,d_freqs,d_longitude,d_latitude,d_time_utc,d_Nelem,d_xx,d_yy,d_zz,d_ra,d_dec,ph_ra0,ph_dec0,ph_freq0,d_beam, (float *)0, N*K*T*F);
     #endif
 
     //mark the end of the computation
