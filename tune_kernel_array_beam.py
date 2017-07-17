@@ -10,6 +10,8 @@ def get_kernel_path():
     """ get path to the kernels as a string """
     return str(os.path.dirname(os.path.realpath(__file__)))+'/'
 
+cp = ["-rdc=true", "-arch=sm_52", "-I"+get_kernel_path(), "-maxrregcount=32"] #, "-Xptxas=-v"]
+
 
 def generate_input_data(N, T, K, F):
     """ Generate random input data for calling kernel_array_beam
@@ -33,6 +35,7 @@ def generate_input_data(N, T, K, F):
     latitude = np.random.randn(N).astype(np.float32)
     time_utc = np.random.randn(T).astype(np.float64)
     Nelem = (500+5.*np.random.randn(N)).astype(np.int32)
+    Nelem = np.array([i if i <= 512 else 512 for i in Nelem]).astype(np.int32)
 
     print(Nelem)
     TotalElem = np.sum(Nelem)
@@ -53,13 +56,12 @@ def run():
     F = 10
 
     problem_size = N*T*K*F
-    cp = ["-rdc=true", "-arch=sm_52", "-I"+get_kernel_path(), "-maxrregcount=32"]
 
     args = generate_input_data(N, T, K, F)
 
     problem_size = N*T*K*F
 
-    params = {"block_size_x": 128, "use_kernel": 0}
+    params = {"block_size_x": 128, "use_kernel": 0, "use_shared_mem": 1}
     run_kernel("kernel_tuner_host_array_beam", [get_kernel_path()+"predict_model.cu"], problem_size, args, params,
                 lang="C", compiler_options=cp)
 
@@ -84,7 +86,6 @@ def tune():
     F = 10
 
     problem_size = N*T*K*F
-    cp = ["-rdc=true", "-arch=sm_52", "-I"+get_kernel_path(), "-maxrregcount=32"]
 
     args = generate_input_data(N, T, K, F)
 
@@ -93,6 +94,7 @@ def tune():
     tune_params = OrderedDict()
     tune_params["block_size_x"] = [2**i for i in range(5,11)]
     tune_params["use_kernel"] = [0]
+    tune_params["use_shared_mem"] = [0, 1]
 
     #restrict = ["use_kernel == 0 or block_size_x<=64"]
     results, env = tune_kernel("kernel_tuner_host_array_beam", [get_kernel_path()+"predict_model.cu"], problem_size, args, tune_params,
