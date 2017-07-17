@@ -41,10 +41,10 @@ def generate_input_data(N, T, K, F):
     TotalElem = np.sum(Nelem)
     print(TotalElem)
 
-    x, y, z = np.random.randn(3, TotalElem).astype(np.float32)
-    ra, dec = np.random.randn(2, K).astype(np.float32)
-    beam = np.zeros(N*T*K*F).astype(np.float32)
-    ph_ra0, ph_dec0, ph_freq0 = np.random.randn(3).astype(np.float32)
+    x, y, z = (1e7 * np.random.randn(3, TotalElem)).astype(np.float32)
+    ra, dec = (2 * np.pi * np.random.randn(2, K)).astype(np.float32)
+    beam = (1e6 * np.random.randn(N*T*K*F)).astype(np.float32)
+    ph_ra0, ph_dec0, ph_freq0 = (2 * np.pi * np.random.randn(3)).astype(np.float32)
 
     return (np.int32(N), np.int32(T), np.int32(K), np.int32(F), freqs, longitude, latitude,
            time_utc, Nelem, x, y, z, ra, dec, ph_ra0, ph_dec0, ph_freq0, beam, np.int32(TotalElem))
