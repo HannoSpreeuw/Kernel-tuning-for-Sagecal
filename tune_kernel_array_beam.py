@@ -10,7 +10,7 @@ def get_kernel_path():
     """ get path to the kernels as a string """
     return str(os.path.dirname(os.path.realpath(__file__)))+'/'
 
-cp = ["-rdc=true", "-arch=sm_52", "-I"+get_kernel_path(), "-maxrregcount=32"] #, "-Xptxas=-v"]
+cp = ["-rdc=true", "-arch=sm_52", "-I"+get_kernel_path()] #, "-maxrregcount=32"] #, "-Xptxas=-v"]
 
 
 def generate_input_data(N, T, K, F):
@@ -34,12 +34,31 @@ def generate_input_data(N, T, K, F):
     longitude = np.random.randn(N).astype(np.float32)
     latitude = np.random.randn(N).astype(np.float32)
     time_utc = np.random.randn(T).astype(np.float64)
-    Nelem = (500+5.*np.random.randn(N)).astype(np.int32)
-    Nelem = np.array([i if i <= 512 else 512 for i in Nelem]).astype(np.int32)
 
-    print(Nelem)
+    elem_per_station = 500
+    max_elem = 512
+    Nelem = (elem_per_station+5.*np.random.randn(N)).astype(np.int32)
+    Nelem = np.array([i if i <= max_elem else max_elem for i in Nelem]).astype(np.int32)
     TotalElem = np.sum(Nelem)
+
+    #it's important that TotalElem is always the same to get our
+    #measurements right across multiple runs of this script
+    target_total = N*500
+    while TotalElem < N*elem_per_station:
+        too_few = min(N*elem_per_station - TotalElem, N)
+        for i in range(too_few):
+            if Nelem[i] < max_elem:
+                Nelem[i] = Nelem[i]+1
+        TotalElem = np.sum(Nelem)
+    while TotalElem > N*elem_per_station:
+        too_many = min(TotalElem - N*elem_per_station, N)
+        for i in range(too_many):
+            Nelem[i] = Nelem[i]-1
+        TotalElem = np.sum(Nelem)
+    print(Nelem)
     print(TotalElem)
+    assert TotalElem == N*elem_per_station
+
 
     x, y, z = (1e7 * np.random.randn(3, TotalElem)).astype(np.float32)
     ra, dec = (2 * np.pi * np.random.randn(2, K)).astype(np.float32)
@@ -55,20 +74,45 @@ def run():
     K = 150
     F = 10
 
-    problem_size = N*T*K*F
-
     args = generate_input_data(N, T, K, F)
 
-    problem_size = N*T*K*F
+    problem_size = (T*K*F, N)
 
-    params = {"block_size_x": 128, "use_kernel": 0, "use_shared_mem": 1}
-    run_kernel("kernel_tuner_host_array_beam", [get_kernel_path()+"predict_model.cu"], problem_size, args, params,
-                lang="C", compiler_options=cp)
+    #ref = call_reference_kernel(N, T, K, F, args, cp)
+
+    params = {"block_size_x": 256, "use_kernel": 0, "use_shared_mem": 1}
+    ans = run_kernel("kernel_tuner_host_array_beam", [get_kernel_path()+"predict_model.cu"], problem_size, args, params,
+                lang="C", compiler_options=cp + ['-Xptxas=-v'])
+
+
+    if False: #debugging
+        print(ref[17][:20])
+        print(ans[17][:20])
+
+        ref = ref[17]
+        ans = ans[17]
+
+        refp = ref.reshape(T*K, N*F)
+        ansp = ans.reshape(T*K, N*F)
+
+        from matplotlib import pyplot
+        pyplot.imshow(refp)
+        pyplot.show()
+        pyplot.imshow(ansp)
+        pyplot.show()
+
+        pyplot.imshow(refp-ansp)
+        pyplot.show()
+
+        err = ref-ans
+        print(err[np.absolute(err)>1e-6])
+
+        assert np.allclose(ref, ans, atol=1e-6)
 
 
 def call_reference_kernel(N, T, K, F, args, cp):
 
-    problem_size = N*T*K*F
+    problem_size = (T*K*F, N)
 
     params = {"block_size_x": 32, "use_kernel": 1}
     answer = run_kernel("kernel_tuner_host_array_beam", [get_kernel_path()+"predict_model.cu"], problem_size, args, params,
@@ -85,11 +129,13 @@ def tune():
     K = 150
     F = 10
 
-    problem_size = N*T*K*F
+    problem_size = (T*K*F, N)
 
     args = generate_input_data(N, T, K, F)
 
     ref = call_reference_kernel(N, T, K, F, args, cp)
+
+    print(ref[17][:20])
 
     tune_params = OrderedDict()
     tune_params["block_size_x"] = [2**i for i in range(5,11)]
