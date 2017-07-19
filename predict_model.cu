@@ -180,89 +180,35 @@ NearestPowerOf2 (int n){
 /* tarr: size NTKFx2 buffer to store sin() cos() sums */
 __global__ void 
 kernel_array_beam(int N, int T, int K, int F,
-    const float *__restrict__ freqs, const float *__restrict__ longitude, const float *__restrict__ latitude,
-    const double *time_utc, const int *__restrict__ Nelem,
-    const float * const *__restrict__ xx, const float * const *__restrict__ yy, const float * const *__restrict__ zz,
-    const float *__restrict__ ra, const float *__restrict__ dec, float ph_ra0, float ph_dec0, float ph_freq0, float *beam, float *tarr,
-    int Ntotal) {
+        const float *__restrict__ freqs, const float *__restrict__ longitude, const float *__restrict__ latitude,
+        const double *__restrict__ time_utc, const int *__restrict__ Nelem,
+        const float * const *__restrict__ xx, const float * const *__restrict__ yy, const float * const *__restrict__ zz,
+        const float *__restrict__ ra, const float *__restrict__ dec,
+        float ph_ra0, float ph_dec0, float ph_freq0, float *beam, float *tarr) {
 
-  /* global thread index */
-  unsigned int n=threadIdx.x+blockDim.x*blockIdx.x;
+    // global thread index, in x-dimension
+    int x=threadIdx.x+blockDim.x*blockIdx.x;
+    int istat = blockIdx.y;
 
-  /* allowed max threads */
-  //int Ntotal=N*T*K*F; //Ben, no need to compute this 18 million times
-  if (n<Ntotal) {
-   /* find respective station,source,freq,time for this thread */
+    #if use_kernel == 1
+    int n = istat*(K*T*F)+x;
+    #endif
 
-   int istat=n/(K*T*F);
-   int n1=n-istat*(K*T*F);
-   int isrc=n1/(T*F);
-   n1=n1-isrc*(T*F);
-   int ifrq=n1/(T);
-   n1=n1-ifrq*(T);
-   int itm=n1;
+    // find respective source,freq,time for this thread
+    int n1 = x;
+    int isrc=n1/(T*F);
+    n1=n1-isrc*(T*F);
+    int ifrq=n1/(T);
+    n1=n1-ifrq*(T);
+    int itm=n1;
 
-/*********************************************************************/
-   /* time is already converted to thetaGMST */
-    //TODO: time_utc is stored as double, but is used as float, this is wasting bandwidth
-   float thetaGMST=(float) time_utc[itm]; //Ben removed __ldg, because of lack of data reuse
-   /* find az,el */
-   float az,el,az0,el0,theta,phi,theta0,phi0;
-   radec2azel_gmst__(__ldg(&ra[isrc]),__ldg(&dec[isrc]), __ldg(&longitude[istat]), __ldg(&latitude[istat]), thetaGMST, &az, &el);
-   radec2azel_gmst__(ph_ra0,ph_dec0, __ldg(&longitude[istat]), __ldg(&latitude[istat]), thetaGMST, &az0, &el0);
-   /* transform : theta = 90-el, phi=-az? 45 only needed for element beam */
-   theta=M_PI_2-el;
-   phi=-az; /* */
-   theta0=M_PI_2-el0;
-   phi0=-az0; /* */
-/*********************************************************************/
+    //number of elements for this station
+    int Nelems = __ldg(&Nelem[istat]);
 
-   /* 2*PI/C */
-   const float tpc=2.0f * M_PI/CONST_C;
-   float sint,cost,sinph,cosph,sint0,cost0,sinph0,cosph0;
-   sincosf(theta,&sint,&cost);
-   sincosf(phi,&sinph,&cosph);
-   sincosf(theta0,&sint0,&cost0);
-   sincosf(phi0,&sinph0,&cosph0);
-
-   float r1,r2,r3;
-   /*r1=(float)-tpc*(ph_freq0*sint0*cosph0-freqs[ifrq]*sint*cosph);
-   r2=(float)-tpc*(ph_freq0*sint0*sinph0-freqs[ifrq]*sint*sinph);
-   r3=(float)-tpc*(ph_freq0*cost0-freqs[ifrq]*cost);
-   */
-   float f=__ldg(&freqs[ifrq]);
-   float rat1=ph_freq0*sint0;
-   float rat2=f*sint;
-   r1=-tpc*(rat1*cosph0-rat2*cosph);
-   r2=-tpc*(rat1*sinph0-rat2*sinph);
-   r3=-tpc*(ph_freq0*cost0-f*cost);
-   
-
-   /* always use 1 block, assuming total elements<512 */
-   /* shared memory to store either sin or cos values */
-
-   int boffset=itm*N*K*F+isrc*N*F+ifrq*N+istat;
-   int Nelems=__ldg(&Nelem[istat]);
-#if use_kernel == 1 // use the slave kernel
-
-#ifdef CUDA_DBG
-   cudaError_t error;
-#endif
-   //int boffset=istat*K*T*F + isrc*T*F + ifrq*T + itm;
-   kernel_array_beam_slave_sincos<<<1,Nelems,sizeof(float)*Nelems*2>>>(Nelems,r1,r2,r3,xx[istat],yy[istat],zz[istat],&tarr[2*n],NearestPowerOf2(Nelems));
-   cudaDeviceSynchronize();
-#ifdef CUDA_DBG
-  error = cudaGetLastError();
-  if(error != cudaSuccess) {
-    // print the CUDA error message and exit
-    printf("CUDA error: %s :%s: %d\n", cudaGetErrorString(error),__FILE__,__LINE__);
-  }
-#endif
-   float ssum=__ldg(&tarr[2*n]);
-   float csum=__ldg(&tarr[2*n+1]);
- 
-#else  // instead just use a for-loop
-    #if use_shared_mem == 1
+    //if not using slave kernel, and using shared memory
+    //preload all x,y,z positions of elements for this station
+    //it's important that all threads participate in this loop
+    #if (use_kernel == 0) && (use_shared_mem == 1)
     #define MAX_ELEM 512
     __shared__ float sh_x[MAX_ELEM];
     __shared__ float sh_y[MAX_ELEM];
@@ -275,28 +221,83 @@ kernel_array_beam(int N, int T, int K, int F,
     __syncthreads();
     #endif
 
-    float ssum = 0.0f;
-    float csum = 0.0f;
-    for (int i=0; i<Nelems; i++) {
-        float ss,cc;
-        #if use_shared_mem == 0
-         sincosf((r1*__ldg(&xx[istat][i])+r2*__ldg(&yy[istat][i])+r3*__ldg(&zz[istat][i])),&ss,&cc);
-        #else
-         sincosf(r1*sh_x[i]+r2*sh_y[i]+r3*sh_z[i],&ss,&cc);
-        #endif
-        ssum += ss;
-        csum += cc;
-    }
-#endif
-   
-   float Nnor=1.0f/(float)Nelems;
-   ssum*=Nnor;
-   csum*=Nnor;
-   /* store output (amplitude of beam)*/
-   beam[boffset]=sqrtf(ssum*ssum+csum*csum);
-   //printf("thread %d stat %d src %d freq %d time %d : %lf longitude=%lf latitude=%lf time=%lf freq=%lf elem=%d ra=%lf dec=%lf beam=%lf\n",n,istat,isrc,ifrq,itm,time_utc[itm],longitude[istat],latitude[istat],time_utc[itm],freqs[ifrq],Nelem[istat],ra[isrc],dec[isrc],beam[boffset]);
-  }
+    float r1,r2,r3;
+    if (x < (K*T*F)) {
 
+        // time is already converted to thetaGMST
+        float thetaGMST=(float) __ldg(&time_utc[itm]);
+        // find az,el
+        float az,el,az0,el0,theta,phi,theta0,phi0;
+        radec2azel_gmst__(__ldg(&ra[isrc]),__ldg(&dec[isrc]), __ldg(&longitude[istat]), __ldg(&latitude[istat]), thetaGMST, &az, &el);
+        radec2azel_gmst__(ph_ra0,ph_dec0, __ldg(&longitude[istat]), __ldg(&latitude[istat]), thetaGMST, &az0, &el0);
+        // transform : theta = 90-el, phi=-az? 45 only needed for element beam
+        theta=M_PI_2-el;
+        phi=-az;
+        theta0=M_PI_2-el0;
+        phi0=-az0;
+
+        // 2*PI/C
+        const float tpc=2.0f * M_PI/CONST_C;
+        float sint,cost,sinph,cosph,sint0,cost0,sinph0,cosph0;
+        sincosf(theta,&sint,&cost);
+        sincosf(phi,&sinph,&cosph);
+        sincosf(theta0,&sint0,&cost0);
+        sincosf(phi0,&sinph0,&cosph0);
+
+        /*r1=(float)-tpc*(ph_freq0*sint0*cosph0-freqs[ifrq]*sint*cosph);
+        r2=(float)-tpc*(ph_freq0*sint0*sinph0-freqs[ifrq]*sint*sinph);
+        r3=(float)-tpc*(ph_freq0*cost0-freqs[ifrq]*cost);
+        */
+        float f=__ldg(&freqs[ifrq]);
+        float rat1=ph_freq0*sint0;
+        float rat2=f*sint;
+        r1=-tpc*(rat1*cosph0-rat2*cosph);
+        r2=-tpc*(rat1*sinph0-rat2*sinph);
+        r3=-tpc*(ph_freq0*cost0-f*cost);
+
+        #if use_kernel == 1 // use the slave kernel
+
+        //int boffset=istat*K*T*F + isrc*T*F + ifrq*T + itm;
+        // always use 1 block, assuming total elements<512 
+        kernel_array_beam_slave_sincos<<<1,Nelems,sizeof(float)*Nelems*2>>>(Nelems,r1,r2,r3,xx[istat],yy[istat],zz[istat],&tarr[2*n],NearestPowerOf2(Nelems));
+        cudaDeviceSynchronize();
+        #ifdef CUDA_DBG
+            cudaError_t error = cudaGetLastError();
+            if(error != cudaSuccess) {
+                // print the CUDA error message and exit
+                printf("CUDA error: %s :%s: %d\n", cudaGetErrorString(error),__FILE__,__LINE__);
+            }
+        #endif
+        float ssum=__ldg(&tarr[2*n]);
+        float csum=__ldg(&tarr[2*n+1]);
+
+        #else  // instead just use a for-loop
+
+        float ssum = 0.0f;
+        float csum = 0.0f;
+        for (int i=0; i<Nelems; i++) {
+            float ss,cc;
+            #if use_shared_mem == 0
+            sincosf((r1*__ldg(&xx[istat][i])+r2*__ldg(&yy[istat][i])+r3*__ldg(&zz[istat][i])),&ss,&cc);
+            #else
+            sincosf(r1*sh_x[i]+r2*sh_y[i]+r3*sh_z[i],&ss,&cc);
+            #endif
+            ssum += ss;
+            csum += cc;
+        }
+
+        #endif // use_kernel
+   
+        float Nnor=1.0f/(float)Nelems;
+        ssum*=Nnor;
+        csum*=Nnor;
+        // store output (amplitude of beam)
+        int boffset=itm*N*K*F+isrc*N*F+ifrq*N+istat;
+        beam[boffset]=sqrtf(ssum*ssum+csum*csum);
+        //printf("thread %d stat %d src %d freq %d time %d : %lf longitude=%lf latitude=%lf time=%lf freq=%lf elem=%d ra=%lf dec=%lf beam=%lf\n",n,istat,isrc,ifrq,itm,time_utc[itm],longitude[istat],latitude[istat],time_utc[itm],freqs[ifrq],Nelem[istat],ra[isrc],dec[isrc],beam[boffset]);
+  
+    } // x < ktf
+ 
 }
 
 /***************************************************************************/
@@ -784,8 +785,12 @@ cudakernel_array_beam(int N, int T, int K, int F, float *freqs, float *longitude
 
   int ThreadsPerBlock=DEFAULT_TH_PER_BK;
   /* note: make sure we do not exceed max no of blocks available, otherwise (too many sources, loop over source id) */
-  int BlocksPerGrid= 2*(Ntotal+ThreadsPerBlock-1)/ThreadsPerBlock;
-  kernel_array_beam<<<BlocksPerGrid,ThreadsPerBlock>>>(N,T,K,F,freqs,longitude,latitude,time_utc,Nelem,xx,yy,zz,ra,dec,ph_ra0,ph_dec0,ph_freq0,beam,buffer, N*T*K*F);
+  //int BlocksPerGrid= 2*(Ntotal+ThreadsPerBlock-1)/ThreadsPerBlock;
+  dim3 grid(1, 1, 1);
+  grid.x = (int)ceilf((K*T*F) / (float)ThreadsPerBlock);
+  grid.y = N;
+
+  kernel_array_beam<<<grid,ThreadsPerBlock>>>(N,T,K,F,freqs,longitude,latitude,time_utc,Nelem,xx,yy,zz,ra,dec,ph_ra0,ph_dec0,ph_freq0,beam,buffer);
   cudaDeviceSynchronize();
 
   cudaFree(buffer);
@@ -965,10 +970,10 @@ kernel_tuner_host_array_beam(int N, int T, int K, int F, float *freqs, float *lo
     cudaMemcpy(d_latitude, latitude, N*sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_ra, ra, K*sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_dec, dec, K*sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_beam, beam, N*T*K*F*sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_time_utc, time_utc, T*sizeof(double), cudaMemcpyHostToDevice);
     cudaMemcpy(d_Nelem, Nelem, N*sizeof(int), cudaMemcpyHostToDevice);
 
+    cudaMemset(d_beam,0,N*T*K*F*sizeof(float));
 
     // create events for measuring time
     cudaEvent_t start;
@@ -984,9 +989,9 @@ kernel_tuner_host_array_beam(int N, int T, int K, int F, float *freqs, float *lo
     }
 
     /* total number of threads needed */
-    int Ntotal=N*T*K*F;
 
     #if use_kernel == 1
+    int Ntotal=N*T*K*F;
     float *buffer;
     cudaMalloc((void**)&buffer, 2*Ntotal*sizeof(float));
     cudaMemset(buffer,0,sizeof(float)*2*Ntotal);
@@ -995,16 +1000,19 @@ kernel_tuner_host_array_beam(int N, int T, int K, int F, float *freqs, float *lo
     //int ThreadsPerBlock=DEFAULT_TH_PER_BK;
     int ThreadsPerBlock= block_size_x;
     //int BlocksPerGrid= 2*(Ntotal+ThreadsPerBlock-1)/ThreadsPerBlock;  
-    int BlocksPerGrid = (int)ceilf(Ntotal / (float)ThreadsPerBlock);
+    //int BlocksPerGrid = (int)ceilf(Ntotal / (float)ThreadsPerBlock);
+    dim3 grid(1, 1, 1);
+    grid.x = (int)ceilf((K*T*F) / (float)ThreadsPerBlock);
+    grid.y = N;
 
     //start timing
     cudaDeviceSynchronize();
     cudaEventRecord(start, 0);
 
     #if use_kernel == 1
-    kernel_array_beam<<<BlocksPerGrid,ThreadsPerBlock>>>(N,T,K,F,d_freqs,d_longitude,d_latitude,d_time_utc,d_Nelem,d_xx,d_yy,d_zz,d_ra,d_dec,ph_ra0,ph_dec0,ph_freq0,d_beam,buffer, N*K*T*F);
+    kernel_array_beam<<<grid,ThreadsPerBlock>>>(N,T,K,F,d_freqs,d_longitude,d_latitude,d_time_utc,d_Nelem,d_xx,d_yy,d_zz,d_ra,d_dec,ph_ra0,ph_dec0,ph_freq0,d_beam,buffer);
     #else
-    kernel_array_beam<<<BlocksPerGrid,ThreadsPerBlock>>>(N,T,K,F,d_freqs,d_longitude,d_latitude,d_time_utc,d_Nelem,d_xx,d_yy,d_zz,d_ra,d_dec,ph_ra0,ph_dec0,ph_freq0,d_beam, (float *)0, N*K*T*F);
+    kernel_array_beam<<<grid,ThreadsPerBlock>>>(N,T,K,F,d_freqs,d_longitude,d_latitude,d_time_utc,d_Nelem,d_xx,d_yy,d_zz,d_ra,d_dec,ph_ra0,ph_dec0,ph_freq0,d_beam, (float *)0);
     #endif
 
     //mark the end of the computation
