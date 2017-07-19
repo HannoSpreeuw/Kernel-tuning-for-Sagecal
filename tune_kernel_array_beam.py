@@ -43,21 +43,21 @@ def generate_input_data(N, T, K, F):
 
     #it's important that TotalElem is always the same to get our
     #measurements right across multiple runs of this script
-    target_total = N*500
-    while TotalElem < N*elem_per_station:
-        too_few = min(N*elem_per_station - TotalElem, N)
+    target_total = N*elem_per_station
+    while TotalElem < target_total:
+        too_few = min(target_total - TotalElem, N)
         for i in range(too_few):
             if Nelem[i] < max_elem:
                 Nelem[i] = Nelem[i]+1
         TotalElem = np.sum(Nelem)
-    while TotalElem > N*elem_per_station:
-        too_many = min(TotalElem - N*elem_per_station, N)
+    while TotalElem > target_total:
+        too_many = min(TotalElem - target_total, N)
         for i in range(too_many):
             Nelem[i] = Nelem[i]-1
         TotalElem = np.sum(Nelem)
     print(Nelem)
     print(TotalElem)
-    assert TotalElem == N*elem_per_station
+    assert TotalElem == target_total
 
 
     x, y, z = (1e7 * np.random.randn(3, TotalElem)).astype(np.float32)
