@@ -561,7 +561,9 @@ kernel_coherencies_slave(int sta1, int sta2, int itm, int B, int N, int T, int K
      if (dobeam) {
       /* get beam info */
       //int boffset1=sta1*K*T*F + k1*T*F + cf*T + itm;
+
       int boffset1=itm*N*K*F+k1*N*F+cf*N+sta1;
+      //  printf("itm=%d, k1=%d, sta1=%d, sta2=%d, boffset1=%d, boffset2=%d\n", itm, k1, sta1, sta2, boffset1, boffset2);
       float beam1=__ldg(&beam[boffset1]);
       //int boffset2=sta2*K*T*F + k1*T*F + cf*T + itm;
       int boffset2=itm*N*K*F+k1*N*F+cf*N+sta2;
@@ -644,6 +646,7 @@ kernel_coherencies_slave(int sta1, int sta2, int itm, int B, int N, int T, int K
 }
 
 /* master kernel to calculate coherencies */
+extern "C"
 __global__ void 
 kernel_coherencies(int B, int N, int T, int K, int F,float *u, float *v, float *w,baseline_t *barr, float *freqs, float *beam, float *ll, float *mm, float *nn, float *sI,
   unsigned char *stype, float *sI0, float *f0, float *spec_idx, float *spec_idx1, float *spec_idx2, int **exs, float deltaf, float deltat, float dec0, float *coh, int dobeam) {
@@ -663,7 +666,7 @@ kernel_coherencies(int B, int N, int T, int K, int F,float *u, float *v, float *
    cudaError_t error;
 #endif
 
-   int ThreadsPerBlock=DEFAULT_TH_PER_BK;
+   int ThreadsPerBlock= block_size_x; //DEFAULT_TH_PER_BK;
    /* each slave thread will calculate one source, 8xF values for all freq */
    /* also give right offset for coherencies */
    if (K<ThreadsPerBlock) {

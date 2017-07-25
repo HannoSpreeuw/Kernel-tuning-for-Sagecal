@@ -35,7 +35,7 @@ typedef struct exinfo_ring_ {
 
 typedef struct exinfo_shapelet_ {
   int n0; /* model order, no of modes=n0*n0 */
-  double beta; /* scale*/
+  double beta; /* scale */
   double *modes; /* array of n0*n0 x 1 values */
   double eX,eY,eP; /* linear transform parameters */
 
