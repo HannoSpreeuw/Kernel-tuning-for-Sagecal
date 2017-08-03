@@ -497,38 +497,11 @@ shapelet_contrib(int *dd, float u, float v, float w) {
 }
 
 
+__device__ cuFloatComplex compute_prodterm(int sta1, int sta2, int N, int K, int T, int F,
+float phterm0, float sIf, float sI0f, float spec_idxf, float spec_idx1f, float spec_idx2f, float myf0,
+const float *__restrict__ freqs, float deltaf, int dobeam, int itm, int k1, int cf, float *beam, int **exs, unsigned char stypeT,
+float u, float v, float w, int k) {
 
-/* slave thread to calculate coherencies, for 1 source */
-/* baseline (sta1,sta2) at time itm */
-/* K: total sources, uset to find right offset 
-   Kused: actual sources calculated in this thread block
-   Koff: offset in source array to start calculation
-   NOTE: only 1 block is used
- */
-__global__ void 
-kernel_coherencies_slave(int sta1, int sta2, int itm, int B, int N, int T, int K, int Kused, int Koff, int F, float u, float v, float w, float *freqs, float *beam, float *ll, float *mm, float *nn, float *sI,
-  unsigned char *stype, float *sI0, float *f0, float *spec_idx, float *spec_idx1, float *spec_idx2, int **exs, float deltaf, float deltat, float dec0, float *__restrict__ coh,int dobeam,int blockDim_2) {
-  /* which source we work on */
-  unsigned int k=threadIdx.x+blockDim.x*blockIdx.x;
-
-  extern __shared__ float tmpcoh[]; /* assumed to be size 8*F*Kusedx1 */
-
-  if (k<Kused) {
-   int k1=k+Koff; /* actual source id */
-   /* preload all freq independent variables */
-   /* Fourier phase */
-   float phterm0=2.0f*M_PI*(u*__ldg(&ll[k])+v*__ldg(&mm[k])+w*__ldg(&nn[k]));
-   float sIf,sI0f,spec_idxf,spec_idx1f,spec_idx2f,myf0;
-   sIf=__ldg(&sI[k]);
-   if (F>1) {
-     sI0f=__ldg(&sI0[k]);
-     spec_idxf=__ldg(&spec_idx[k]);
-     spec_idx1f=__ldg(&spec_idx1[k]);
-     spec_idx2f=__ldg(&spec_idx2[k]);
-     myf0=__ldg(&f0[k]);
-   }
-   unsigned char stypeT=__ldg(&stype[k]);
-   for(int cf=0; cf<F; cf++) {
      float sinph,cosph;
      float myfreq=__ldg(&freqs[cf]);
      sincosf(phterm0*myfreq,&sinph,&cosph);
@@ -591,6 +564,53 @@ kernel_coherencies_slave(int sta1, int sta2, int itm, int B, int N, int T, int K
       }
      }
      
+
+    return prodterm;
+
+}
+
+
+/* slave thread to calculate coherencies, for 1 source */
+/* baseline (sta1,sta2) at time itm */
+/* K: total sources, uset to find right offset 
+   Kused: actual sources calculated in this thread block
+   Koff: offset in source array to start calculation
+   NOTE: only 1 block is used
+ */
+__global__ void 
+kernel_coherencies_slave(int sta1, int sta2, int itm, int B, int N, int T, int K, int Kused, int Koff, int F,
+    float u, float v, float w, const float *freqs, float *beam, const float *ll, const float *mm, const float *nn, const float *sI,
+    const unsigned char *stype, const float *sI0, const float *f0, const float *spec_idx, const float *spec_idx1, const float *spec_idx2,
+    int **exs, float deltaf, float deltat, float dec0, float *__restrict__ coh, int dobeam, int blockDim_2) {
+  /* which source we work on */
+  unsigned int k=threadIdx.x+blockDim.x*blockIdx.x;
+
+  extern __shared__ float tmpcoh[]; /* assumed to be size 8*F*Kusedx1 */
+
+  if (k<Kused) {
+
+   int k1=k+Koff; /* actual source id */
+
+   /* preload all freq independent variables */
+   /* Fourier phase */
+   float phterm0=2.0f*M_PI*(u*__ldg(&ll[k])+v*__ldg(&mm[k])+w*__ldg(&nn[k]));
+   float sIf,sI0f,spec_idxf,spec_idx1f,spec_idx2f,myf0;
+   sIf=__ldg(&sI[k]);
+   if (F>1) {
+     sI0f=__ldg(&sI0[k]);
+     spec_idxf=__ldg(&spec_idx[k]);
+     spec_idx1f=__ldg(&spec_idx1[k]);
+     spec_idx2f=__ldg(&spec_idx2[k]);
+     myf0=__ldg(&f0[k]);
+   }
+   unsigned char stypeT=__ldg(&stype[k]);
+   for(int cf=0; cf<F; cf++) {
+
+
+    cuFloatComplex prodterm = compute_prodterm(sta1, sta2, N, K, T, F,
+phterm0, sIf, sI0f, spec_idxf, spec_idx1f, spec_idx2f, myf0, freqs, deltaf, dobeam, itm, k1, cf, beam, exs, stypeT, u, v, w, k);
+
+
 //printf("k=%d cf=%d freq=%f uvw %f,%f,%f lmn %f,%f,%f phterm %f If %f\n",k,cf,freqs[cf],u,v,w,ll[k],mm[k],nn[k],phterm,If);
 
      /* write output to shared array */
@@ -648,8 +668,11 @@ kernel_coherencies_slave(int sta1, int sta2, int itm, int B, int N, int T, int K
 /* master kernel to calculate coherencies */
 extern "C"
 __global__ void 
-kernel_coherencies(int B, int N, int T, int K, int F,float *u, float *v, float *w,baseline_t *barr, float *freqs, float *beam, float *ll, float *mm, float *nn, float *sI,
-  unsigned char *stype, float *sI0, float *f0, float *spec_idx, float *spec_idx1, float *spec_idx2, int **exs, float deltaf, float deltat, float dec0, float *coh, int dobeam) {
+kernel_coherencies(int B, int N, int T, int K, int F, float *u, float *v, float *w, baseline_t *barr, float *freqs, float *beam,
+    const float *__restrict__ ll, const float *__restrict__ mm, const float *__restrict__ nn,
+    const float *__restrict__ sI, const unsigned char *__restrict__ stype,
+    const float *__restrict__ sI0, const float *__restrict__ f0,
+    const float *__restrict__ spec_idx, const float *__restrict__ spec_idx1, const float *__restrict__ spec_idx2, int **exs, float deltaf, float deltat, float dec0, float *coh, int dobeam) {
 
   /* global thread index */
   unsigned int n=threadIdx.x+blockDim.x*blockIdx.x;
@@ -661,6 +684,8 @@ kernel_coherencies(int B, int N, int T, int K, int F,float *u, float *v, float *
    /* find out which time slot this baseline is from */
    int tslot=n/((N*(N-1)/2));
 
+
+    #if use_kernel == 1
 
 #ifdef CUDA_DBG
    cudaError_t error;
@@ -705,8 +730,64 @@ kernel_coherencies(int B, int N, int T, int K, int F,float *u, float *v, float *
     }
    }
 
-  }
+    #else //use_kernel == 0
 
+    float u_n = u[n];
+    float v_n = v[n];
+    float w_n = w[n];
+
+    //TODO: figure out if this max_f makes any sense
+    #define MAX_F 20
+    cuFloatComplex l_coh[MAX_F];
+    for(int cf=0; cf<F; cf++) {
+        l_coh[cf] = make_cuFloatComplex(0.0f, 0.0f);
+    }
+
+    //use simply for-loop, if K is very large this may be slow and may need further parallelization
+    for (int k=0; k<K; k++) {
+
+        //source specific params
+        float phterm0 = 0.0f;
+        float sIf,sI0f,spec_idxf,spec_idx1f,spec_idx2f,myf0;
+
+        phterm0 = 2.0f*M_PI*(u_n*__ldg(&ll[k])+v_n*__ldg(&mm[k])+w_n*__ldg(&nn[k]));
+        sIf=__ldg(&sI[k]);
+        if (F>1) {
+            sI0f=__ldg(&sI0[k]);
+            spec_idxf=__ldg(&spec_idx[k]);
+            spec_idx1f=__ldg(&spec_idx1[k]);
+            spec_idx2f=__ldg(&spec_idx2[k]);
+            myf0=__ldg(&f0[k]);
+        }
+
+        unsigned char stypeT=__ldg(&stype[k]);
+
+        for(int cf=0; cf<F; cf++) {
+            l_coh[cf] = cuCaddf(l_coh[cf], compute_prodterm(sta1, sta2, N, K, T, F, phterm0, sIf, sI0f, spec_idxf, spec_idx1f, spec_idx2f,
+                                myf0, freqs, deltaf, dobeam, tslot, k, cf, beam, exs, stypeT, u_n, v_n, w_n, k));
+        }
+
+    }
+
+    //write output
+    coh = &coh[8*n];
+    for(int cf=0; cf<F; cf++) {
+
+        coh[cf*8*B+0] = l_coh[cf].x;
+        coh[cf*8*B+1] = l_coh[cf].y;
+        coh[cf*8*B+2] = 0.0f;
+        coh[cf*8*B+3] = 0.0f;
+        coh[cf*8*B+4] = 0.0f;
+        coh[cf*8*B+5] = 0.0f;
+        coh[cf*8*B+6] = l_coh[cf].x;
+        coh[cf*8*B+7] = l_coh[cf].y;
+
+    }
+
+
+    #endif
+
+  }
 }
 
 
