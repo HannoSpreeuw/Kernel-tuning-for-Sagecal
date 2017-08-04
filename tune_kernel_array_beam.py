@@ -126,16 +126,17 @@ def tune():
 
     N = 61
     T = 200
-    K = 150
+    #K = 150
+    K = 5000
     F = 10
 
     problem_size = (T*K*F, N)
 
     args = generate_input_data(N, T, K, F)
 
-    ref = call_reference_kernel(N, T, K, F, args, cp)
+    #ref = call_reference_kernel(N, T, K, F, args, cp)
 
-    print(ref[17][:20])
+    #print(ref[17][:20])
 
     tune_params = OrderedDict()
     tune_params["block_size_x"] = [2**i for i in range(5,11)]
@@ -144,7 +145,7 @@ def tune():
 
     #restrict = ["use_kernel == 0 or block_size_x<=64"]
     results, env = tune_kernel("kernel_tuner_host_array_beam", [get_kernel_path()+"predict_model.cu"], problem_size, args, tune_params,
-                lang="C", compiler_options=cp, verbose=True, answer=ref)
+                lang="C", compiler_options=cp, verbose=True ) #, answer=ref)
 
     return results
 

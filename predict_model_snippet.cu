@@ -16,34 +16,38 @@ extern "C"
 __global__ void 
 sincos_manual(int N, float r1, float r2, float r3, float *x, float *y, float *z, float *sum) {
     int n=threadIdx.x;
-    __shared__ float tmpsum[2*block_size_x];
-    tmpsum[2*n]=0.0f;
-    tmpsum[2*n+1]=0.0f;
+    __shared__ float sh_sin[block_size_x];
+    __shared__ float sh_cos[block_size_x];
+    float l_sin = 0.0f;
+    float l_cos = 0.0f;
 
     //thread block iterates over elements 0 to N
     //values are accumulated in shared memory
     for (int i=n; i<N; i+=block_size_x) {
         float ss,cc;
         sincosf((r1*__ldg(&x[i])+r2*__ldg(&y[i])+r3*__ldg(&z[i])),&ss,&cc);
-        tmpsum[2*n] += ss;
-        tmpsum[2*n+1] += cc;
+        l_sin += ss;
+        l_cos += cc;
     }
+
+    sh_sin[n] = l_sin;
+    sh_cos[n] = l_cos;
     __syncthreads();
 
     //reduction loop
     #pragma unroll
     for (unsigned int s=block_size_x/2; s>0; s>>=1) {
         if (n < s) {
-            tmpsum[2*n] += tmpsum[2*(n+s)];
-            tmpsum[2*n+1] += tmpsum[2*(n+s)+1];
+            sh_sin[n] += sh_sin[n+s];
+            sh_cos[n] += sh_cos[n+s];
         }
         __syncthreads();
     }
 
     // now thread 0 will add up results
     if (n==0) {
-        sum[0]=tmpsum[0];
-        sum[1]=tmpsum[1];
+        sum[0] = sh_sin[0];
+        sum[1] = sh_cos[0];
     }
 
 }
