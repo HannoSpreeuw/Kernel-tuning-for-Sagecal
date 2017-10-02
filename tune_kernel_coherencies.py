@@ -5,6 +5,7 @@ from collections import OrderedDict
 import os
 
 import numpy as np
+import pylab as pyl
 from kernel_tuner import tune_kernel, run_kernel
 
 def get_kernel_path():
@@ -90,12 +91,12 @@ def call_reference_kernel(N, B, T, K, F, args):
     return answer
 
 
-def tune():
+def tune(number_of_sources):
 
     N = 61
-    T = 200
-    K = 150
-    F = 10
+    T = 20 
+    K = number_of_sources 
+    F = 1
     B = (N)*(N-1)//2 * T
 
     print('N', N, 'B', B, 'T', T, 'K', K, 'F', F)
@@ -105,27 +106,53 @@ def tune():
     problem_size = B
 
     tune_params = OrderedDict()
-    tune_params['block_size_x'] = [2**i for i in range(5,11)]
-    tune_params['use_kernel'] = [0]
+    tune_params['block_size_x'] = [2**i for i in range(5,10)]
 
+    print("First call the reference kernel")
     ref = call_reference_kernel(N, B, T, K, F, args)
-
     answer = [None for _ in args]
     answer[-2] = ref[-2]
 
+    tolerance = 1e-2
+    verbosity = False
+    print("Next, we call the modified kernel, with (use_kernel = 1) and without (use_kernel = 0) the slave kernel")
     print("With slave kernel:")
-    tune_kernel("kernel_coherencies", get_kernel_path()+"predict_model.cu",
-                               problem_size, args, {'block_size_x': [32], 'use_kernel': [1]}, compiler_options=cp, verbose=True, answer=answer, atol=1e-5)
+    # tune_kernel("kernel_coherencies", get_kernel_path()+"predict_model.cu",
+    #                           problem_size, args, {'block_size_x': [32], 'use_kernel': [1]}, compiler_options=cp, verbose=True, answer=answer, atol=tolerance)
 
+    tune_params['use_kernel'] = [1]
+    results, env = tune_kernel("kernel_coherencies", get_kernel_path()+"predict_model.cu",
+                               problem_size, args, tune_params, compiler_options=cp, verbose=verbosity, answer=answer, atol=tolerance)
+
+    min_time_with_slave = min([item['time'] for item in results])
 
     print("Without slave kernel:")
+    tune_params['use_kernel'] = [0]
     results, env = tune_kernel("kernel_coherencies", get_kernel_path()+"predict_model.cu",
-                               problem_size, args, tune_params, compiler_options=cp, verbose=True, answer=answer, atol=1e-5)
+                               problem_size, args, tune_params, compiler_options=cp, verbose=verbosity, answer=answer, atol=tolerance)
 
-    return results
+    min_time_without_slave = min([item['time'] for item in results])
+
+    print()
+    print()
+    return min_time_with_slave/min_time_without_slave
 
 
 if __name__ == "__main__":
+    
+    min_sources = 10
+    max_sources  = 50000
+    number_measurements = 10
+    numbersofsources = np.logspace(np.log10(min_sources), np.log10(max_sources), number_measurements, dtype=np.int32) 
+    accelerations = np.empty(number_measurements, dtype=np.float32)
 
-    tune()
-
+    for counter, number_of_sources in enumerate(numbersofsources):
+        accel = tune(number_of_sources) 
+        print("Acceleration by abandoning the slave kernel = {0:.2f}".format(accel))
+        accelerations[counter] = accel
+    
+    np.save("numbersofsources", numbersofsources)
+    np.save("accelerations", accelerations)
+     
+    pyl.plot(numbersofsources, accelerations, 'ro')
+    pyl.show()
