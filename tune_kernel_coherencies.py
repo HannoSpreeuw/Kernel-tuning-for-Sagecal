@@ -91,12 +91,12 @@ def call_reference_kernel(N, B, T, K, F, args):
     return answer
 
 
-def tune(number_of_sources):
+def tune(number_of_frequencies):
 
     N = 61
     T = 20 
-    K = number_of_sources 
-    F = 1
+    K = 150
+    F = number_of_frequencies
     B = (N)*(N-1)//2 * T
 
     print('N', N, 'B', B, 'T', T, 'K', K, 'F', F)
@@ -133,26 +133,26 @@ def tune(number_of_sources):
 
     min_time_without_slave = min([item['time'] for item in results])
 
-    print()
-    print()
     return min_time_with_slave/min_time_without_slave
 
 
 if __name__ == "__main__":
     
-    min_sources = 10
-    max_sources  = 50000
+    min_frequencies  = 1
+    max_frequencies  = 100
     number_measurements = 10
-    numbersofsources = np.logspace(np.log10(min_sources), np.log10(max_sources), number_measurements, dtype=np.int32) 
+    numbersoffrequencies = np.logspace(np.log10(min_frequencies), np.log10(max_frequencies), number_measurements, dtype=np.int32) 
     accelerations = np.empty(number_measurements, dtype=np.float32)
 
-    for counter, number_of_sources in enumerate(numbersofsources):
-        accel = tune(number_of_sources) 
+    for counter, number_of_frequencies in enumerate(numbersoffrequencies):
+        accel = tune(number_of_frequencies) 
         print("Acceleration by abandoning the slave kernel = {0:.2f}".format(accel))
+        print()
+        print()
         accelerations[counter] = accel
     
-    np.save("numbersofsources", numbersofsources)
-    np.save("accelerations", accelerations)
+    np.save("numbersoffrequencies", numbersoffrequencies)
+    np.save("accelerations-from-varying-number-of-frequencies", accelerations)
      
-    pyl.plot(numbersofsources, accelerations, 'ro')
+    pyl.plot(numbersoffrequencies, accelerations, 'ro')
     pyl.show()
