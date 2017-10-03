@@ -142,7 +142,7 @@ def tune(number_of_sources):
 
     tune_params = OrderedDict()
     tune_params["block_size_x"] = [2**i for i in range(5,11)]
-    tune_params["use_kernel"] = [0, 1]
+    tune_params["use_kernel"] = [0]
     tune_params["use_shared_mem"] = [0, 1]
 
     #restrict = ["use_kernel == 0 or block_size_x<=64"]
