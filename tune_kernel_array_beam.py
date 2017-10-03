@@ -122,30 +122,32 @@ def call_reference_kernel(N, T, K, F, args, cp):
     return ref
 
 
-def tune():
+def tune(number_of_sources):
 
     N = 61
-    T = 200
+    T = 20 
     #K = 150
-    K = 5000
-    F = 10
+    K = number_of_sources
+    F = 1
 
-    problem_size = (T*K*F, N)
+    print('N', N, 'T', T, 'K', K, 'F', F)
 
     args = generate_input_data(N, T, K, F)
 
-    #ref = call_reference_kernel(N, T, K, F, args, cp)
+    problem_size = (T*K*F, N)
+
+    ref = call_reference_kernel(N, T, K, F, args, cp)
 
     #print(ref[17][:20])
 
     tune_params = OrderedDict()
     tune_params["block_size_x"] = [2**i for i in range(5,11)]
-    tune_params["use_kernel"] = [0]
+    tune_params["use_kernel"] = [0, 1]
     tune_params["use_shared_mem"] = [0, 1]
 
     #restrict = ["use_kernel == 0 or block_size_x<=64"]
     results, env = tune_kernel("kernel_tuner_host_array_beam", [get_kernel_path()+"predict_model.cu"], problem_size, args, tune_params,
-                lang="C", compiler_options=cp, verbose=True ) #, answer=ref)
+                lang="C", compiler_options=cp, verbose=True, answer=ref, atol = 1e-4)
 
     return results
 
@@ -153,5 +155,21 @@ def tune():
 
 if __name__ == "__main__":
 
-    tune()
-    #run() #useful for running this script using NVVP
+    min_sources = 10
+    max_sources  = 50000
+    number_measurements = 10
+    numbersofsources = np.logspace(np.log10(min_sources), np.log10(max_sources), number_measurements, dtype=np.int32) 
+    accelerations = np.empty(number_measurements, dtype=np.float32)
+
+    for counter, number_of_sources in enumerate(numbersofsources):
+        accel = tune(number_of_sources) 
+        print("Acceleration by abandoning the slave kernel = {0:.2f}".format(accel))
+        print()
+        print()
+        accelerations[counter] = accel
+   
+    output_path = "kernel-array-beam-output/" 
+    np.save(output_path + "numbersofsources", numbersofsources)
+    np.save(output_path + "accelerations-with-varying-number-of-sources", accelerations)
+     
+    pyl.plot(numbersofsources, accelerations, 'ro')
