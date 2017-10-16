@@ -68,8 +68,7 @@ def generate_input_data(N, T, K, F):
     return (np.int32(N), np.int32(T), np.int32(K), np.int32(F), freqs, longitude, latitude,
            time_utc, Nelem, x, y, z, ra, dec, ph_ra0, ph_dec0, ph_freq0, beam, np.int32(TotalElem))
 
-def load_real_data():
-    path_to_bin_files = "bin-files/"
+def load_real_data(path_to_bin_files):
     
     N = np.fromfile(path_to_bin_files + "t_N.bin", np.int32)[0]
     T = np.fromfile(path_to_bin_files + "t_tilesz.bin", np.int32)[0]     
@@ -135,9 +134,7 @@ def run():
         assert np.allclose(ref, ans, atol=1e-6)
 
 
-def call_reference_kernel(N, T, K, F, args, cp):
-
-    problem_size = (T*K*F, N)
+def call_reference_kernel(problem_size, args, cp):
 
     params = {"block_size_x": 32, "use_kernel": 1}
     answer = run_kernel("kernel_tuner_host_array_beam", [get_kernel_path()+"predict_model.cu"], problem_size, args, params,
@@ -149,39 +146,16 @@ def call_reference_kernel(N, T, K, F, args, cp):
 
 def tune():
 
-    N = 61
-    T = 200
-    #K = 150
-    K = 5000
-    F = 10
+    path_to_bin_files = "bin-files/"
 
-    # problem_size = (T*K*F, N)
-
-    args_random = generate_input_data(N, T, K, F)
-    # print()
-    # print("Original args = {0}".format(args_random))
-    # print()
-
-    args_real = load_real_data()
- 
-    # print()
-    # print("Args from real data  = {0}".format(args_real))
-    # print()
-    
-    decision = list(map(type, args_random)) == list(map(type, args_real))
-    print("Are the random and real arguments all of the same type? {0}".format(decision))
-    print()
-    print("Are there as many random as real arguments? {0}".format(len(args_random) == len(args_real)))
-    print() 
-    for index, elem in enumerate(args_random):
-        print(index, " Equal type? {0}".format(type(elem) == type(args_real[index])))
-
-    args = args_real
+    args = load_real_data(path_to_bin_files)
 
     problem_size = (args[1] * args[2] * args[3], args[0])
-    #ref = call_reference_kernel(N, T, K, F, args, cp)
 
-    #print(ref[17][:20])
+    # ref = call_reference_kernel(problem_size, args, cp)
+
+    ref = [None] * len(args)
+    ref[17] = np.fromfile(path_to_bin_files + "beam_d.bin", np.float32)
 
     tune_params = OrderedDict()
     tune_params["block_size_x"] = [2**i for i in range(5,11)]
@@ -190,7 +164,7 @@ def tune():
 
     #restrict = ["use_kernel == 0 or block_size_x<=64"]
     results, env = tune_kernel("kernel_tuner_host_array_beam", [get_kernel_path()+"predict_model.cu"], problem_size, args, tune_params,
-                lang="C", compiler_options=cp, verbose=True ) #, answer=ref)
+                lang="C", compiler_options=cp, verbose=True, answer=ref)
 
     return results
 
