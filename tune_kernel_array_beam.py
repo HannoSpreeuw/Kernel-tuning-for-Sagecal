@@ -137,6 +137,7 @@ def run():
 def call_reference_kernel(problem_size, args, cp):
 
     params = {"block_size_x": 32, "use_kernel": 1}
+
     answer = run_kernel("kernel_tuner_host_array_beam", [get_kernel_path()+"predict_model.cu"], problem_size, args, params,
                 lang="C", compiler_options=cp)
     ref = [None for _ in answer]
@@ -151,15 +152,17 @@ def tune():
     args = load_real_data(path_to_bin_files)
 
     problem_size = (args[1] * args[2] * args[3], args[0])
+    print()
+    print( args[0], args[1], args[2], args[3])
 
-    # ref = call_reference_kernel(problem_size, args, cp)
+    ref = call_reference_kernel(problem_size, args, cp)
 
-    ref = [None] * len(args)
-    ref[17] = np.fromfile(path_to_bin_files + "beam_d.bin", np.float32)
+    # ref = [None] * len(args)
+    # ref[17] = np.fromfile(path_to_bin_files + "beam_d.bin", np.float32)
 
     tune_params = OrderedDict()
     tune_params["block_size_x"] = [2**i for i in range(5,11)]
-    tune_params["use_kernel"] = [0]
+    tune_params["use_kernel"] = [1]
     tune_params["use_shared_mem"] = [0, 1]
 
     #restrict = ["use_kernel == 0 or block_size_x<=64"]

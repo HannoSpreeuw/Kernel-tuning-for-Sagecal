@@ -175,6 +175,92 @@ NearestPowerOf2 (int n){
   return x;
 }
 
+/* master kernel to calculate beam */
+/* tarr: size NTKFx2 buffer to store sin() cos() sums */
+__global__ void 
+kernel_array_beam_original(int N, int T, int K, int F, float *freqs, float *longitude, float *latitude,
+ double *time_utc, int *Nelem, float **xx, float **yy, float **zz, float *ra, float *dec, float ph_ra0, float ph_dec0, float ph_freq0, float *beam, float *tarr) {
+
+  /* global thread index */
+  unsigned int n=threadIdx.x+blockDim.x*blockIdx.x;
+  /* allowed max threads */
+  int Ntotal=N*T*K*F;
+  if (n<Ntotal) {
+   /* find respective station,source,freq,time for this thread */
+   int istat=n/(K*T*F);
+   int n1=n-istat*(K*T*F);
+   int isrc=n1/(T*F);
+   n1=n1-isrc*(T*F);
+   int ifrq=n1/(T);
+   n1=n1-ifrq*(T);
+   int itm=n1;
+
+/*********************************************************************/
+   /* time is already converted to thetaGMST */
+   float thetaGMST=(float)__ldg(&time_utc[itm]);
+   /* find az,el */
+   float az,el,az0,el0,theta,phi,theta0,phi0;
+   radec2azel_gmst__(__ldg(&ra[isrc]),__ldg(&dec[isrc]), __ldg(&longitude[istat]), __ldg(&latitude[istat]), thetaGMST, &az, &el);
+   radec2azel_gmst__(ph_ra0,ph_dec0, __ldg(&longitude[istat]), __ldg(&latitude[istat]), thetaGMST, &az0, &el0);
+   /* transform : theta = 90-el, phi=-az? 45 only needed for element beam */
+   theta=M_PI_2-el;
+   phi=-az; /* */
+   theta0=M_PI_2-el0;
+   phi0=-az0; /* */
+/*********************************************************************/
+
+   /* 2*PI/C */
+   const float tpc=2.0f*M_PI/CONST_C;
+   float sint,cost,sinph,cosph,sint0,cost0,sinph0,cosph0;
+   sincosf(theta,&sint,&cost);
+   sincosf(phi,&sinph,&cosph);
+   sincosf(theta0,&sint0,&cost0);
+   sincosf(phi0,&sinph0,&cosph0);
+
+   float r1,r2,r3;
+   /*r1=(float)-tpc*(ph_freq0*sint0*cosph0-freqs[ifrq]*sint*cosph);
+   r2=(float)-tpc*(ph_freq0*sint0*sinph0-freqs[ifrq]*sint*sinph);
+   r3=(float)-tpc*(ph_freq0*cost0-freqs[ifrq]*cost);
+   */
+   float f=__ldg(&freqs[ifrq]);
+   float rat1=ph_freq0*sint0;
+   float rat2=f*sint;
+   r1=-tpc*(rat1*cosph0-rat2*cosph);
+   r2=-tpc*(rat1*sinph0-rat2*sinph);
+   r3=-tpc*(ph_freq0*cost0-f*cost);
+   
+
+   /* always use 1 block, assuming total elements<512 */
+   /* shared memory to store either sin or cos values */
+
+#ifdef CUDA_DBG
+   cudaError_t error;
+#endif
+   //int boffset=istat*K*T*F + isrc*T*F + ifrq*T + itm;
+   int boffset=itm*N*K*F+isrc*N*F+ifrq*N+istat;
+   int Nelems=__ldg(&Nelem[istat]);
+   kernel_array_beam_slave_sincos<<<1,Nelems,sizeof(float)*Nelems*2>>>(Nelems,r1,r2,r3,xx[istat],yy[istat],zz[istat],&tarr[2*n],NearestPowerOf2(Nelems));
+   cudaDeviceSynchronize();
+#ifdef CUDA_DBG
+  error = cudaGetLastError();
+  if(error != cudaSuccess) {
+    // print the CUDA error message and exit
+    printf("CUDA error: %s :%s: %d\n", cudaGetErrorString(error),__FILE__,__LINE__);
+  }
+#endif
+   float ssum=__ldg(&tarr[2*n]);
+   float csum=__ldg(&tarr[2*n+1]);
+   
+   float Nnor=1.0f/(float)Nelems;
+   ssum*=Nnor;
+   csum*=Nnor;
+   /* store output (amplitude of beam)*/
+   beam[boffset]=sqrtf(ssum*ssum+csum*csum);
+   //printf("thread %d stat %d src %d freq %d time %d : %lf longitude=%lf latitude=%lf time=%lf freq=%lf elem=%d ra=%lf dec=%lf beam=%lf\n",n,istat,isrc,ifrq,itm,time_utc[itm],longitude[istat],latitude[istat],time_utc[itm],freqs[ifrq],Nelem[istat],ra[isrc],dec[isrc],beam[boffset]);
+  }
+
+}
+
 
 /* master kernel to calculate beam */
 /* tarr: size NTKFx2 buffer to store sin() cos() sums */
@@ -971,13 +1057,6 @@ cudakernel_convert_time(int T, double *time_utc) {
 }
 
 
-
-
-
-
-
-
-
 /* 
   This kernel is there so we can call the kernel_array_beam using the Kernel Tuner
   for testing and performance tuning purposes
@@ -1094,7 +1173,7 @@ kernel_tuner_host_array_beam(int N, int T, int K, int F, float *freqs, float *lo
     cudaEventRecord(start, 0);
 
     #if use_kernel == 1
-    kernel_array_beam<<<grid,ThreadsPerBlock>>>(N,T,K,F,d_freqs,d_longitude,d_latitude,d_time_utc,d_Nelem,d_xx,d_yy,d_zz,d_ra,d_dec,ph_ra0,ph_dec0,ph_freq0,d_beam,buffer);
+    kernel_array_beam_original<<<grid,ThreadsPerBlock>>>(N,T,K,F,d_freqs,d_longitude,d_latitude,d_time_utc,d_Nelem,d_xx,d_yy,d_zz,d_ra,d_dec,ph_ra0,ph_dec0,ph_freq0,d_beam,buffer);
     #else
     kernel_array_beam<<<grid,ThreadsPerBlock>>>(N,T,K,F,d_freqs,d_longitude,d_latitude,d_time_utc,d_Nelem,d_xx,d_yy,d_zz,d_ra,d_dec,ph_ra0,ph_dec0,ph_freq0,d_beam, (float *)0);
     #endif
@@ -1145,7 +1224,6 @@ kernel_tuner_host_array_beam(int N, int T, int K, int F, float *freqs, float *lo
 
     return time;
 }
-
 
 
 
